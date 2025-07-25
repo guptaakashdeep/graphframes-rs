@@ -66,6 +66,12 @@ pub struct PregelBuilder {
     aggregate_expr: Option<Expr>,
 }
 
+#[derive(Debug)]
+pub struct PregelOutput {
+    pub data: DataFrame,
+    pub num_iterations: usize,
+}
+
 pub fn pregel_src(col_name: &str) -> Expr {
     col(PREGEL_MSG_SRC).field(col_name)
 }
@@ -156,7 +162,7 @@ impl PregelBuilder {
     ///
     /// Returns the DataFrame with the vertex columns after running the algorithm.
     /// If include_debug_columns is true, it will also include activity flags, voting, etc.
-    pub async fn run(self, include_debug_columns: bool) -> Result<DataFrame> {
+    pub async fn run(self, include_debug_columns: bool) -> Result<PregelOutput> {
         // Validate configuration
         if self.messages.is_empty() {
             return Err(datafusion::error::DataFusionError::Plan(
@@ -243,10 +249,29 @@ impl PregelBuilder {
             );
         }
         update_columns.push(col(VERTEX_ID).alias(VERTEX_ID));
-        let edges = self.graph.edges.clone().cache().await?;
+        let edges_struct = self
+            .graph
+            .edges
+            .clone()
+            .select(vec![
+                named_struct(
+                    self.graph
+                        .edges
+                        .schema()
+                        .fields()
+                        .iter()
+                        .map(|field| field.name())
+                        .flat_map(|name| vec![lit(name), col(name)])
+                        .collect(),
+                )
+                .alias(PREGEL_MSG_EDGE),
+            ])?
+            .cache()
+            .await?;
 
         // Main Pregel loop
         while iteration < max_iterations {
+            iteration += 1;
             let vertices_struct = current_vertices.clone().select(vec![
                 named_struct(
                     current_vertices
@@ -258,19 +283,6 @@ impl PregelBuilder {
                         .collect(),
                 )
                 .alias("_vertex_struct"),
-            ])?;
-
-            let edges_struct = edges.clone().select(vec![
-                named_struct(
-                    edges
-                        .schema()
-                        .fields()
-                        .iter()
-                        .map(|field| field.name())
-                        .flat_map(|name| vec![lit(name), col(name)])
-                        .collect(),
-                )
-                .alias(PREGEL_MSG_EDGE),
             ])?;
 
             let mut triplets = vertices_struct
@@ -354,7 +366,6 @@ impl PregelBuilder {
                     break;
                 }
             }
-            iteration += 1;
         }
 
         // If include_debug_columns is false, drop the debug columns
@@ -368,7 +379,10 @@ impl PregelBuilder {
             current_vertices = current_vertices.select(required_columns)?;
         }
 
-        Ok(current_vertices)
+        Ok(PregelOutput {
+            data: current_vertices,
+            num_iterations: iteration,
+        })
     }
 }
 
@@ -382,8 +396,9 @@ impl GraphFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::{Float64Array, Int64Array, RecordBatch};
+    use datafusion::arrow::array::{Array, Int32Array, Int64Array, RecordBatch};
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+    use datafusion::functions_aggregate::min_max::max;
     use datafusion::functions_aggregate::sum::sum;
     use std::sync::Arc;
 
@@ -429,7 +444,8 @@ mod tests {
             .add_vertex_column("value", lit(0), col("value"))
             .add_message(lit(1), MessageDirection::SrcToDst)
             .run(true)
-            .await?;
+            .await?
+            .data;
 
         let result_schema = result.schema();
         assert_eq!(result_schema.fields().len(), 4);
@@ -450,7 +466,8 @@ mod tests {
             .add_message(lit(1), MessageDirection::SrcToDst)
             .with_aggregate_expr(sum(col(PREGEL_MSG)))
             .run(false)
-            .await?;
+            .await?
+            .data;
 
         let counts = result
             .select(vec![col("id"), col("in_degree")])?
@@ -480,7 +497,8 @@ mod tests {
             .add_message(lit(1), MessageDirection::DstToSrc)
             .with_aggregate_expr(sum(col(PREGEL_MSG)))
             .run(false)
-            .await?;
+            .await?
+            .data;
 
         let counts = result
             .select(vec![col("id"), col("out_degree")])?
@@ -510,7 +528,8 @@ mod tests {
             .add_message(lit(1), MessageDirection::SrcToDst)
             .with_aggregate_expr(sum(col(PREGEL_MSG)))
             .run(false)
-            .await?;
+            .await?
+            .data;
 
         let counts = result.select(vec![col("loop")])?.collect().await?;
 
@@ -536,7 +555,8 @@ mod tests {
             .add_message(lit(1), MessageDirection::SrcToDst)
             .with_aggregate_expr(sum(col(PREGEL_MSG)))
             .run(false)
-            .await?;
+            .await?
+            .data;
 
         let values = result.select(vec![col("value")])?.collect().await?;
 
@@ -553,58 +573,88 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_pregel_pagerank() -> Result<()> {
-        // Create a simple graph:
-        // 1 -> 2 -> 3
-        //      ^    |
-        //      +----+
-        let graph = create_graph(vec![1, 2, 3], vec![vec![1, 2], vec![2, 3], vec![3, 2]])?;
-        let out_degrees = graph.out_degrees().await?;
-        let graph_with_degrees = GraphFrame {
-            vertices: out_degrees,
-            edges: graph.edges.clone(),
-        };
+    async fn test_pregel_chain_propagation() -> Result<()> {
+        // Create a chain graph: 1 -> 2 -> 3 -> 4
+        let graph = create_graph(vec![1, 2, 3, 4], vec![vec![1, 2], vec![2, 3], vec![3, 4]])?;
 
-        let damping = lit(0.85);
-        let result = graph_with_degrees
+        let result = graph
             .pregel()
-            .max_iterations(2)
+            .max_iterations(100) // We should check that voting works
             .add_vertex_column(
-                "rank",
-                lit(1.0),
-                (lit(1.0) - damping.clone()) + damping * col(PREGEL_MSG),
+                "value",
+                when(col("id").eq(lit(1)), lit(1)).otherwise(lit(0))?,
+                when(col(PREGEL_MSG).gt(col("value")), col(PREGEL_MSG)).otherwise(col("value"))?,
             )
-            .add_vertex_column("degree", col("out_degree"), col("degree"))
-            .add_message(
-                col("rank") / pregel_src("degree"),
-                MessageDirection::SrcToDst,
-            )
-            .with_aggregate_expr(sum(col(PREGEL_MSG)))
+            .with_vertex_voting("active", col("value").not_eq(col(PREGEL_MSG)))
+            .add_message(pregel_src("value"), MessageDirection::SrcToDst)
+            .with_aggregate_expr(max(col(PREGEL_MSG)))
             .run(false)
             .await?;
 
-        let ranks = result
-            .select(vec![col("id"), col("rank")])?
-            .sort(vec![col("id").sort(true, false)])?
-            .collect()
+        // In four iterations it should converge
+        assert_eq!(result.num_iterations, 4);
+
+        let values = result.data.select(vec![col("value")])?.collect().await?;
+
+        let mut values_vec: Vec<i32> = Vec::new();
+        for batch in values.iter() {
+            values_vec.append(
+                &mut batch
+                    .column(0)
+                    .clone()
+                    .as_any()
+                    .downcast_ref::<Int32Array>()
+                    .unwrap()
+                    .values()
+                    .to_vec(),
+            );
+        }
+
+        // All vertices should have value 1
+        assert!(values_vec.iter().all(|&x| x == 1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pregel_back_chain_propagation() -> Result<()> {
+        // Create a chain graph: 1 -> 2 -> 3 -> 4
+        let graph = create_graph(vec![1, 2, 3, 4], vec![vec![1, 2], vec![2, 3], vec![3, 4]])?;
+
+        let result = graph
+            .pregel()
+            .max_iterations(100) // We should check that voting works
+            .add_vertex_column(
+                "value",
+                when(col("id").eq(lit(4)), lit(1)).otherwise(lit(0))?,
+                when(col(PREGEL_MSG).gt(col("value")), col(PREGEL_MSG)).otherwise(col("value"))?,
+            )
+            .with_vertex_voting("active", col("value").not_eq(col(PREGEL_MSG)))
+            .add_message(pregel_dst("value"), MessageDirection::DstToSrc)
+            .with_aggregate_expr(max(col(PREGEL_MSG)))
+            .run(false)
             .await?;
 
-        // After 2 iterations ranks should start converging,
-        // Node 2 should have the highest rank due to 2 incoming edges
-        let rank_array = ranks[0].column(1);
-        let ranks: Vec<f64> = (0..3)
-            .map(|i| {
-                rank_array
+        // In four iterations it should converge
+        assert_eq!(result.num_iterations, 4);
+
+        let values = result.data.select(vec![col("value")])?.collect().await?;
+
+        let mut values_vec: Vec<i32> = Vec::new();
+        for batch in values.iter() {
+            values_vec.append(
+                &mut batch
+                    .column(0)
+                    .clone()
                     .as_any()
-                    .downcast_ref::<Float64Array>()
+                    .downcast_ref::<Int32Array>()
                     .unwrap()
-                    .value(i)
-            })
-            .collect();
+                    .values()
+                    .to_vec(),
+            );
+        }
 
-        assert!(ranks[1] > ranks[0]); // Node 2 should have a higher rank than Node 1
-        assert!(ranks[1] > ranks[2]); // Node 2 should have a higher rank than Node 3
-
+        // All vertices should have value 1
+        assert!(values_vec.iter().all(|&x| x == 1));
         Ok(())
     }
 }
