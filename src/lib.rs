@@ -190,10 +190,44 @@ mod tests {
 
     #[tokio::test]
     async fn test_pagerank_run() -> Result<()> {
-        let graph = create_test_graph()?;
+        use std::sync::Arc;
+        use datafusion::arrow::datatypes::{DataType, Field, Schema};
+        let ctx = SessionContext::new();
+
+        let edge_schema = Arc::new(Schema::new(vec![
+            Field::new("src", DataType::Int64, false),
+            Field::new("dst", DataType::Int64, false)
+        ]));
+        let vertices_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false)
+        ]));
+
+        let edges = ctx.read_csv(
+            "/Users/akashdeepgupta/Downloads/test-pr-directed/test-pr-directed.e.csv",
+            CsvReadOptions::new()
+                .delimiter(b' ')
+                .has_header(false)
+                .schema(edge_schema.as_ref())
+        ).await?;
+
+        let vertices = ctx.read_csv(
+            "/Users/akashdeepgupta/Downloads/test-pr-directed/test-pr-directed.v.csv",
+            CsvReadOptions::new()
+                .delimiter(b' ')
+                .has_header(false)
+                .schema(vertices_schema.as_ref())
+        ).await?;
+
+        // vertices.show().await?;
+        // edges.show().await?;
+
+        let graph = GraphFrame {
+            vertices,
+            edges,
+        };
 
         let pagerank_results_df = graph.pagerank()
-                                        .max_iter(5)
+                                        .max_iter(14)
                                         .reset_prob(0.15)
                                         .run()
                                         .await?;
