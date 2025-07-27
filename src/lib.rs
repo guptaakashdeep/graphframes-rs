@@ -1,8 +1,11 @@
 mod pregel;
+pub mod pagerank;
 
 use datafusion::error::Result;
 use datafusion::functions_aggregate::count::count;
 use datafusion::prelude::*;
+
+use crate::pagerank::PageRank;
 
 pub const VERTEX_ID: &str = "id";
 pub const EDGE_SRC: &str = "src";
@@ -39,6 +42,10 @@ impl GraphFrame {
             vec![count(col(EDGE_DST)).alias("out_degree")],
         )?;
         Ok(df.select(vec![col(EDGE_SRC).alias(VERTEX_ID), col("out_degree")])?)
+    }
+
+    pub fn pagerank(&self) -> PageRank {
+        PageRank::new(self)
     }
 }
 
@@ -178,6 +185,20 @@ mod tests {
         assert_eq!(degree_map.get(&9), Some(&1));
         assert_eq!(degree_map.get(&10), Some(&1));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pagerank_run() -> Result<()> {
+        let graph = create_test_graph()?;
+
+        let pagerank_results_df = graph.pagerank()
+                                        .max_iter(5)
+                                        .reset_prob(0.15)
+                                        .run()
+                                        .await?;
+        println!("PageRank Results:");
+        pagerank_results_df.show().await?;
         Ok(())
     }
 }
