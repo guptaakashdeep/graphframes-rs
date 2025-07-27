@@ -46,19 +46,19 @@ impl<'a> PageRank<'a> {
         // --- Step 1: Pre-calculate out-degrees ---
         // PageRank needs the out-degree of each vertex to distribute its rank.
         //contains vertex_id and put_degree for each vertices
-        let out_degree_df = self.graph.out_degrees().await?
-                            .with_column_renamed(VERTEX_ID, &format!("{}_right", VERTEX_ID))?;
+        let vertices_with_degrees = self.graph.out_degrees().await?;
+                            // .with_column_renamed(VERTEX_ID, &format!("{}_right", VERTEX_ID))?;
 
         // Get the vertices with the degrees to send the messages
-        let vertices_with_degrees = self.graph.vertices.clone().join(
-            out_degree_df,
-            JoinType::Left,
-            &[VERTEX_ID],
-            &[&format!("{}_right", VERTEX_ID)],
-            None
-        )?
-        .drop_columns(&[&format!("{}_right", VERTEX_ID)])?
-        .with_column("out_degree", coalesce(vec![col("out_degree"), lit(0)]))?;
+        // let vertices_with_degrees = self.graph.vertices.clone().join(
+        //     out_degree_df,
+        //     JoinType::Left,
+        //     &[VERTEX_ID],
+        //     &[&format!("{}_right", VERTEX_ID)],
+        //     None
+        // )?
+        // .drop_columns(&[&format!("{}_right", VERTEX_ID)])?
+        // .with_column("out_degree", coalesce(vec![col("out_degree"), lit(0)]))?;
 
         // Create a temp graph that has vertices with degrees that will be used in Pregel Execution
         let graph_with_degrees = GraphFrame{
@@ -78,7 +78,7 @@ impl<'a> PageRank<'a> {
                 "out_degree",
                 col("out_degree"),
                 col("out_degree")
-            )
+            ) // out_degrees are static
             .add_message(
                 pregel_src("pagerank") / pregel_src("out_degree"),
                 MessageDirection::SrcToDst
@@ -90,7 +90,7 @@ impl<'a> PageRank<'a> {
         let final_page_ranks = result.data;
         
         // TODO: Do we want to return the full computed dataframe or just vertex_id and page_rank should be fine??
-        // Ok(final_page_ranks.select(vec![col("id"), col("pagerank")])?)
-        Ok(final_page_ranks)
+        Ok(final_page_ranks.select(vec![col("id"), col("pagerank")])?)
+        // Ok(final_page_ranks)
     }
 }
