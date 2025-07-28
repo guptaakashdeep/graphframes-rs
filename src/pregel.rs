@@ -64,6 +64,8 @@ pub struct PregelBuilder {
     messages: Vec<Message>,
     /// Expression to aggregate messages
     aggregate_expr: Option<Expr>,
+    /// Checkpoint interval for intermediate results
+    checkpoint_interval: usize,
 }
 
 #[derive(Debug)]
@@ -98,12 +100,19 @@ impl PregelBuilder {
             participation_column: None,
             messages: Vec::new(),
             aggregate_expr: None,
+            checkpoint_interval: 0,
         }
     }
 
     /// Set the maximum number of iterations
     pub fn max_iterations(mut self, max_iterations: usize) -> Self {
         self.max_iterations = Some(max_iterations);
+        self
+    }
+
+    /// Set the checkpoint interval for intermediate results
+    pub fn checkpoint_interval(mut self, checkpoint_interval: usize) -> Self {
+        self.checkpoint_interval = checkpoint_interval;
         self
     }
 
@@ -354,7 +363,12 @@ impl PregelBuilder {
                 .clone()
                 .select(update_columns.clone())?;
 
-            current_vertices = new_vertices.clone();
+            current_vertices =
+                if self.checkpoint_interval > 0 && iteration % self.checkpoint_interval == 0 {
+                    new_vertices.clone().cache().await?
+                } else {
+                    new_vertices.clone()
+                };
             if self.use_vertex_voting {
                 if new_vertices
                     .clone()
@@ -655,6 +669,51 @@ mod tests {
 
         // All vertices should have value 1
         assert!(values_vec.iter().all(|&x| x == 1));
+        Ok(())
+    }
+
+    fn create_circle_edges(n: i64) -> Vec<Vec<i64>> {
+        let mut edges = Vec::new();
+        for i in 0..n {
+            edges.push(vec![i, (i + 1) % n]);
+            edges.push(vec![i, (i + n - 1) % n]);
+        }
+        edges
+    }
+
+    #[tokio::test]
+    async fn test_pregel_long_iterations() -> Result<()> {
+        let n = 100;
+        let vertices: Vec<i64> = (0..n).collect();
+        let edges = create_circle_edges(n);
+        let graph = create_graph(vertices, edges)?;
+
+        let result = graph
+            .pregel()
+            .max_iterations(40)
+            .checkpoint_interval(2)
+            .add_vertex_column("value", lit(0), col("value") + col(PREGEL_MSG))
+            .add_message(lit(1), MessageDirection::Bidirectional)
+            .with_aggregate_expr(sum(col(PREGEL_MSG)))
+            .run(false)
+            .await?;
+
+        let values = result.data.select(vec![col("value")])?.collect().await?;
+
+        let mut values_vec: Vec<i64> = Vec::new();
+        for batch in values.iter() {
+            values_vec.append(
+                &mut batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap()
+                    .values()
+                    .to_vec(),
+            );
+        }
+
+        assert!(values_vec.iter().all(|&x| x == 160));
         Ok(())
     }
 }
