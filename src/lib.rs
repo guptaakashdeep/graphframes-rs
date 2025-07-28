@@ -1,5 +1,5 @@
-mod pregel;
 pub mod pagerank;
+mod pregel;
 
 use datafusion::error::Result;
 use datafusion::functions_aggregate::count::count;
@@ -98,39 +98,47 @@ mod tests {
 
     // Creates GraphFrame from ldbc datasets.
     // dataset: name of ldbc dataset like tested-pr-directed, wiki-Talk, etc.
-    async fn create_ldbc_test_graph(dataset: &str) -> Result<GraphFrame>{
+    async fn create_ldbc_test_graph(dataset: &str) -> Result<GraphFrame> {
         let ctx = SessionContext::new();
 
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
 
         let edge_schema = Schema::new(vec![
             Field::new("src", DataType::Int64, false),
-            Field::new("dst", DataType::Int64, false)
+            Field::new("dst", DataType::Int64, false),
         ]);
-        let vertices_schema = Schema::new(vec![
-            Field::new("id", DataType::Int64, false)
-        ]);
+        let vertices_schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
 
-        let edges_path = format!("{}/testing/data/ldbc/{}/{}.e.csv", manifest_dir, dataset, dataset);
-        let vertices_path = format!("{}/testing/data/ldbc/{}/{}.v.csv", manifest_dir, dataset, dataset);
-        
-        let edges = ctx.read_csv(
-            &edges_path,
-            CsvReadOptions::new()
-                .delimiter(b' ')
-                .has_header(false)
-                .schema(&edge_schema)
-        ).await?;
+        let edges_path = format!(
+            "{}/testing/data/ldbc/{}/{}.e.csv",
+            manifest_dir, dataset, dataset
+        );
+        let vertices_path = format!(
+            "{}/testing/data/ldbc/{}/{}.v.csv",
+            manifest_dir, dataset, dataset
+        );
 
-        let vertices = ctx.read_csv(
-            &vertices_path,
-            CsvReadOptions::new()
-                .delimiter(b' ')
-                .has_header(false)
-                .schema(&vertices_schema)
-        ).await?;
+        let edges = ctx
+            .read_csv(
+                &edges_path,
+                CsvReadOptions::new()
+                    .delimiter(b' ')
+                    .has_header(false)
+                    .schema(&edge_schema),
+            )
+            .await?;
 
-        Ok(GraphFrame{ vertices, edges})
+        let vertices = ctx
+            .read_csv(
+                &vertices_path,
+                CsvReadOptions::new()
+                    .delimiter(b' ')
+                    .has_header(false)
+                    .schema(&vertices_schema),
+            )
+            .await?;
+
+        Ok(GraphFrame { vertices, edges })
     }
 
     // Gets the expected pagerank results from the mentioned ldbc dataset
@@ -139,16 +147,21 @@ mod tests {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let expected_pr_schema = Schema::new(vec![
             Field::new("vertex_id", DataType::Int64, false),
-            Field::new("expected_pr", DataType::Float64, false)
+            Field::new("expected_pr", DataType::Float64, false),
         ]);
-        let expected_pr_path = format!("{}/testing/data/ldbc/{}/{}-PR.csv", manifest_dir, dataset, dataset);
-        let expected_pr = ctx.read_csv(
-            &expected_pr_path,
-            CsvReadOptions::new()
-                .delimiter(b' ')
-                .has_header(false)
-                .schema(&expected_pr_schema)
-        ).await?;
+        let expected_pr_path = format!(
+            "{}/testing/data/ldbc/{}/{}-PR.csv",
+            manifest_dir, dataset, dataset
+        );
+        let expected_pr = ctx
+            .read_csv(
+                &expected_pr_path,
+                CsvReadOptions::new()
+                    .delimiter(b' ')
+                    .has_header(false)
+                    .schema(&expected_pr_schema),
+            )
+            .await?;
         Ok(expected_pr)
     }
 
@@ -249,18 +262,25 @@ mod tests {
         let test_dataset: &str = "test-pr-directed";
         let graph = create_ldbc_test_graph(test_dataset).await?;
 
-        let calculated_page_rank = graph.pagerank()
-                                        .max_iter(14)
-                                        .reset_prob(0.15)
-                                        .checkpoint_interval(2)
-                                        .run()
-                                        .await?;
+        let calculated_page_rank = graph
+            .pagerank()
+            .max_iter(14)
+            .reset_prob(0.15)
+            .checkpoint_interval(2)
+            .run()
+            .await?;
         let ldbc_page_rank = get_ldbc_pr_results(test_dataset).await?;
 
         let comparison_df = calculated_page_rank
-                .join(ldbc_page_rank, JoinType::Left, &["id"], &["vertex_id"], None)?
-                .with_column("difference", col("pagerank") - col("expected_pr"))?
-                .filter(col("difference").gt(lit(0.0015)))?;
+            .join(
+                ldbc_page_rank,
+                JoinType::Left,
+                &["id"],
+                &["vertex_id"],
+                None,
+            )?
+            .with_column("difference", col("pagerank") - col("expected_pr"))?
+            .filter(col("difference").gt(lit(0.0015)))?;
 
         // comparison_df.clone().show().await?;
 

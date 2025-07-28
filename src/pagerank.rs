@@ -1,29 +1,28 @@
-use crate::pregel::{pregel_src, MessageDirection, PregelBuilder, PREGEL_MSG};
 use crate::GraphFrame;
+use crate::pregel::{MessageDirection, PREGEL_MSG, PregelBuilder, pregel_src};
 use datafusion::error::Result;
 use datafusion::functions_aggregate::sum::sum;
 use datafusion::prelude::*;
 
 /// A builder for the PageRank algorithm.
-/// 
+///
 #[derive(Debug)]
 pub struct PageRank<'a> {
     graph: &'a GraphFrame,
     max_iter: usize,
     reset_prob: f64,
     include_debug_columns: bool,
-    checkpoint_interval: usize
+    checkpoint_interval: usize,
 }
 
 impl<'a> PageRank<'a> {
-
     pub fn new(graph: &'a GraphFrame) -> Self {
         PageRank {
             graph,
             max_iter: 0,
             reset_prob: 0.15,
             include_debug_columns: false,
-            checkpoint_interval: 2 // Revisit once default is finalized. temp for now.
+            checkpoint_interval: 2, // Revisit once default is finalized. temp for now.
         }
     }
 
@@ -56,54 +55,44 @@ impl<'a> PageRank<'a> {
         let vertices_with_degrees = self.graph.out_degrees().await?;
 
         // Create a temp graph that has vertices with degrees that will be used in Pregel Execution
-        let graph_with_degrees = GraphFrame{
+        let graph_with_degrees = GraphFrame {
             vertices: vertices_with_degrees,
-            edges: self.graph.edges.clone()
+            edges: self.graph.edges.clone(),
         };
-
 
         // --- Step 2: Create Pregel builder ---
         let pregel_builder = PregelBuilder::new(graph_with_degrees)
             .max_iterations(self.max_iter)
             .checkpoint_interval(self.checkpoint_interval)
-            .add_vertex_column("pagerank",
-                lit(reset_prob_per_vertices), // All vertices start with a rank of 1/N
-                lit(reset_prob_per_vertices) + lit(alpha) * col(PREGEL_MSG) // PageRank calculation
-            )
             .add_vertex_column(
-                "out_degree",
-                col("out_degree"),
-                col("out_degree")
-            ) // out_degrees are static
+                "pagerank",
+                lit(reset_prob_per_vertices), // All vertices start with a rank of 1/N
+                lit(reset_prob_per_vertices) + lit(alpha) * col(PREGEL_MSG), // PageRank calculation
+            )
+            .add_vertex_column("out_degree", col("out_degree"), col("out_degree")) // out_degrees are static
             .add_message(
                 pregel_src("pagerank") / pregel_src("out_degree"),
-                MessageDirection::SrcToDst
+                MessageDirection::SrcToDst,
             )
             .with_aggregate_expr(sum(col(PREGEL_MSG)));
 
         // --- Step 3: Run Pregel Engine ---
         let result = pregel_builder.run(self.include_debug_columns).await?;
         let calculated_page_ranks = result.data;
-        
+
         // Calculating the pagerank aggregation
-        let aggregated_rank = calculated_page_ranks.clone().aggregate(
-            vec![],
-            vec![sum(col("pagerank")).alias("pagerank_sum")]
-        )?
-        .cache().await?;
+        let aggregated_rank = calculated_page_ranks
+            .clone()
+            .aggregate(vec![], vec![sum(col("pagerank")).alias("pagerank_sum")])?
+            .cache()
+            .await?;
 
         // Cross join with calculated pageranks df
-        let final_page_ranks = calculated_page_ranks.join(
-                    aggregated_rank,
-                    JoinType::Inner,
-                    &[],
-                    &[],
-                    None
-                )?;
-        Ok(final_page_ranks.select(
-            vec![
-                col("id"), 
-                (col("pagerank") / col("pagerank_sum")).alias("pagerank")]
-            )?)
+        let final_page_ranks =
+            calculated_page_ranks.join(aggregated_rank, JoinType::Inner, &[], &[], None)?;
+        Ok(final_page_ranks.select(vec![
+            col("id"),
+            (col("pagerank") / col("pagerank_sum")).alias("pagerank"),
+        ])?)
     }
 }
