@@ -192,7 +192,7 @@ impl PregelBuilder {
                 current_vertices.with_column(&column.name, column.init_expr.clone())?;
         }
 
-        let mut iteration = 0;
+        let mut iteration = 1;
         let max_iterations = self.max_iterations.unwrap_or(usize::MAX);
 
         let mut messages = Vec::new();
