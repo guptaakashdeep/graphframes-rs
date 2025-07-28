@@ -11,7 +11,8 @@ pub struct PageRank<'a> {
     graph: &'a GraphFrame,
     max_iter: usize,
     reset_prob: f64,
-    include_debug_columns: bool
+    include_debug_columns: bool,
+    checkpoint_interval: usize
 }
 
 impl<'a> PageRank<'a> {
@@ -21,7 +22,8 @@ impl<'a> PageRank<'a> {
             graph,
             max_iter: 0,
             reset_prob: 0.15,
-            include_debug_columns: false
+            include_debug_columns: false,
+            checkpoint_interval: 2 // Revisit once default is finalized. temp for now.
         }
     }
 
@@ -32,6 +34,11 @@ impl<'a> PageRank<'a> {
 
     pub fn reset_prob(mut self, prob: f64) -> Self {
         self.reset_prob = prob;
+        self
+    }
+
+    pub fn checkpoint_interval(mut self, checkpoint_interval: usize) -> Self {
+        self.checkpoint_interval = checkpoint_interval;
         self
     }
 
@@ -58,7 +65,7 @@ impl<'a> PageRank<'a> {
         // --- Step 2: Create Pregel builder ---
         let pregel_builder = PregelBuilder::new(graph_with_degrees)
             .max_iterations(self.max_iter)
-            .checkpoint_interval(2) //TODO: Revisit once the number is finalized/generalized.
+            .checkpoint_interval(self.checkpoint_interval)
             .add_vertex_column("pagerank",
                 lit(reset_prob_per_vertices), // All vertices start with a rank of 1/N
                 lit(reset_prob_per_vertices) + lit(alpha) * col(PREGEL_MSG) // PageRank calculation

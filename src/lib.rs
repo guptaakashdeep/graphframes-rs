@@ -252,6 +252,7 @@ mod tests {
         let calculated_page_rank = graph.pagerank()
                                         .max_iter(14)
                                         .reset_prob(0.15)
+                                        .checkpoint_interval(2)
                                         .run()
                                         .await?;
         let ldbc_page_rank = get_ldbc_pr_results(test_dataset).await?;
