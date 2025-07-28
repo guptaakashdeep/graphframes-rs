@@ -5,8 +5,6 @@ use datafusion::error::Result;
 use datafusion::functions_aggregate::count::count;
 use datafusion::prelude::*;
 
-use crate::pagerank::PageRank;
-
 pub const VERTEX_ID: &str = "id";
 pub const EDGE_SRC: &str = "src";
 pub const EDGE_DST: &str = "dst";
@@ -42,10 +40,6 @@ impl GraphFrame {
             vec![count(col(EDGE_DST)).alias("out_degree")],
         )?;
         Ok(df.select(vec![col(EDGE_SRC).alias(VERTEX_ID), col("out_degree")])?)
-    }
-
-    pub fn pagerank(&self) -> PageRank {
-        PageRank::new(self)
     }
 }
 
@@ -94,75 +88,6 @@ mod tests {
         let edges = ctx.read_batch(edges_data?)?;
 
         Ok(GraphFrame { vertices, edges })
-    }
-
-    // Creates GraphFrame from ldbc datasets.
-    // dataset: name of ldbc dataset like tested-pr-directed, wiki-Talk, etc.
-    async fn create_ldbc_test_graph(dataset: &str) -> Result<GraphFrame> {
-        let ctx = SessionContext::new();
-
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-
-        let edge_schema = Schema::new(vec![
-            Field::new("src", DataType::Int64, false),
-            Field::new("dst", DataType::Int64, false),
-        ]);
-        let vertices_schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
-
-        let edges_path = format!(
-            "{}/testing/data/ldbc/{}/{}.e.csv",
-            manifest_dir, dataset, dataset
-        );
-        let vertices_path = format!(
-            "{}/testing/data/ldbc/{}/{}.v.csv",
-            manifest_dir, dataset, dataset
-        );
-
-        let edges = ctx
-            .read_csv(
-                &edges_path,
-                CsvReadOptions::new()
-                    .delimiter(b' ')
-                    .has_header(false)
-                    .schema(&edge_schema),
-            )
-            .await?;
-
-        let vertices = ctx
-            .read_csv(
-                &vertices_path,
-                CsvReadOptions::new()
-                    .delimiter(b' ')
-                    .has_header(false)
-                    .schema(&vertices_schema),
-            )
-            .await?;
-
-        Ok(GraphFrame { vertices, edges })
-    }
-
-    // Gets the expected pagerank results from the mentioned ldbc dataset
-    async fn get_ldbc_pr_results(dataset: &str) -> Result<DataFrame> {
-        let ctx = SessionContext::new();
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let expected_pr_schema = Schema::new(vec![
-            Field::new("vertex_id", DataType::Int64, false),
-            Field::new("expected_pr", DataType::Float64, false),
-        ]);
-        let expected_pr_path = format!(
-            "{}/testing/data/ldbc/{}/{}-PR.csv",
-            manifest_dir, dataset, dataset
-        );
-        let expected_pr = ctx
-            .read_csv(
-                &expected_pr_path,
-                CsvReadOptions::new()
-                    .delimiter(b' ')
-                    .has_header(false)
-                    .schema(&expected_pr_schema),
-            )
-            .await?;
-        Ok(expected_pr)
     }
 
     #[tokio::test]
@@ -253,39 +178,6 @@ mod tests {
         assert_eq!(degree_map.get(&8), Some(&2));
         assert_eq!(degree_map.get(&9), Some(&1));
         assert_eq!(degree_map.get(&10), Some(&1));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_pagerank_run() -> Result<()> {
-        let test_dataset: &str = "test-pr-directed";
-        let graph = create_ldbc_test_graph(test_dataset).await?;
-
-        let calculated_page_rank = graph
-            .pagerank()
-            .max_iter(14)
-            .reset_prob(0.15)
-            .checkpoint_interval(2)
-            .run()
-            .await?;
-        let ldbc_page_rank = get_ldbc_pr_results(test_dataset).await?;
-
-        let comparison_df = calculated_page_rank
-            .join(
-                ldbc_page_rank,
-                JoinType::Left,
-                &["id"],
-                &["vertex_id"],
-                None,
-            )?
-            .with_column("difference", col("pagerank") - col("expected_pr"))?
-            .filter(col("difference").gt(lit(0.0015)))?;
-
-        // comparison_df.clone().show().await?;
-
-        // Check if there are no pageranks with difference more than 0.0015
-        assert_eq!(comparison_df.count().await?, 0);
 
         Ok(())
     }

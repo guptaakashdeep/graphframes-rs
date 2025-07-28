@@ -7,7 +7,7 @@ use datafusion::prelude::*;
 /// A builder for the PageRank algorithm.
 ///
 #[derive(Debug)]
-pub struct PageRank<'a> {
+pub struct PageRankBuilder<'a> {
     graph: &'a GraphFrame,
     max_iter: usize,
     reset_prob: f64,
@@ -15,9 +15,9 @@ pub struct PageRank<'a> {
     checkpoint_interval: usize,
 }
 
-impl<'a> PageRank<'a> {
+impl<'a> PageRankBuilder<'a> {
     pub fn new(graph: &'a GraphFrame) -> Self {
-        PageRank {
+        PageRankBuilder {
             graph,
             max_iter: 0,
             reset_prob: 0.15,
@@ -94,5 +94,120 @@ impl<'a> PageRank<'a> {
             col("id"),
             (col("pagerank") / col("pagerank_sum")).alias("pagerank"),
         ])?)
+    }
+}
+
+impl GraphFrame {
+    /// Create a new PageRank algorithm builder
+    pub fn pagerank(&self) -> PageRankBuilder {
+        PageRankBuilder::new(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+    // Creates GraphFrame from ldbc datasets.
+    // dataset: name of ldbc dataset like tested-pr-directed, wiki-Talk, etc.
+    async fn create_ldbc_test_graph(dataset: &str) -> Result<GraphFrame> {
+        let ctx = SessionContext::new();
+
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+
+        let edge_schema = Schema::new(vec![
+            Field::new("src", DataType::Int64, false),
+            Field::new("dst", DataType::Int64, false),
+        ]);
+        let vertices_schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
+
+        let edges_path = format!(
+            "{}/testing/data/ldbc/{}/{}.e.csv",
+            manifest_dir, dataset, dataset
+        );
+        let vertices_path = format!(
+            "{}/testing/data/ldbc/{}/{}.v.csv",
+            manifest_dir, dataset, dataset
+        );
+
+        let edges = ctx
+            .read_csv(
+                &edges_path,
+                CsvReadOptions::new()
+                    .delimiter(b' ')
+                    .has_header(false)
+                    .schema(&edge_schema),
+            )
+            .await?;
+
+        let vertices = ctx
+            .read_csv(
+                &vertices_path,
+                CsvReadOptions::new()
+                    .delimiter(b' ')
+                    .has_header(false)
+                    .schema(&vertices_schema),
+            )
+            .await?;
+
+        Ok(GraphFrame { vertices, edges })
+    }
+
+    // Gets the expected pagerank results from the mentioned ldbc dataset
+    async fn get_ldbc_pr_results(dataset: &str) -> Result<DataFrame> {
+        let ctx = SessionContext::new();
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let expected_pr_schema = Schema::new(vec![
+            Field::new("vertex_id", DataType::Int64, false),
+            Field::new("expected_pr", DataType::Float64, false),
+        ]);
+        let expected_pr_path = format!(
+            "{}/testing/data/ldbc/{}/{}-PR.csv",
+            manifest_dir, dataset, dataset
+        );
+        let expected_pr = ctx
+            .read_csv(
+                &expected_pr_path,
+                CsvReadOptions::new()
+                    .delimiter(b' ')
+                    .has_header(false)
+                    .schema(&expected_pr_schema),
+            )
+            .await?;
+        Ok(expected_pr)
+    }
+
+    #[tokio::test]
+    async fn test_pagerank_run() -> Result<()> {
+        let test_dataset: &str = "test-pr-directed";
+        let graph = create_ldbc_test_graph(test_dataset).await?;
+
+        let calculated_page_rank = graph
+            .pagerank()
+            .max_iter(14)
+            .reset_prob(0.15)
+            .checkpoint_interval(2)
+            .run()
+            .await?;
+        let ldbc_page_rank = get_ldbc_pr_results(test_dataset).await?;
+
+        let comparison_df = calculated_page_rank
+            .join(
+                ldbc_page_rank,
+                JoinType::Left,
+                &["id"],
+                &["vertex_id"],
+                None,
+            )?
+            .with_column("difference", col("pagerank") - col("expected_pr"))?
+            .filter(col("difference").gt(lit(0.0015)))?;
+
+        // comparison_df.clone().show().await?;
+
+        // Check if there are no pageranks with difference more than 0.0015
+        assert_eq!(comparison_df.count().await?, 0);
+
+        Ok(())
     }
 }
