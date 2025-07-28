@@ -1,4 +1,4 @@
-pub mod pagerank;
+mod pagerank;
 mod pregel;
 
 use datafusion::error::Result;
