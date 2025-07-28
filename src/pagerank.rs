@@ -107,8 +107,8 @@ impl GraphFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use crate::tests::create_ldbc_test_graph;
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
 
     // Gets the expected pagerank results from the mentioned ldbc dataset
     async fn get_ldbc_pr_results(dataset: &str) -> Result<DataFrame> {
