@@ -1,5 +1,5 @@
 use crate::pregel::{pregel_src, MessageDirection, PregelBuilder, PREGEL_MSG};
-use crate::{GraphFrame, VERTEX_ID};
+use crate::GraphFrame;
 use datafusion::error::Result;
 use datafusion::functions_aggregate::sum::sum;
 use datafusion::prelude::*;
@@ -47,18 +47,6 @@ impl<'a> PageRank<'a> {
         // PageRank needs the out-degree of each vertex to distribute its rank.
         //contains vertex_id and put_degree for each vertices
         let vertices_with_degrees = self.graph.out_degrees().await?;
-                            // .with_column_renamed(VERTEX_ID, &format!("{}_right", VERTEX_ID))?;
-
-        // Get the vertices with the degrees to send the messages
-        // let vertices_with_degrees = self.graph.vertices.clone().join(
-        //     out_degree_df,
-        //     JoinType::Left,
-        //     &[VERTEX_ID],
-        //     &[&format!("{}_right", VERTEX_ID)],
-        //     None
-        // )?
-        // .drop_columns(&[&format!("{}_right", VERTEX_ID)])?
-        // .with_column("out_degree", coalesce(vec![col("out_degree"), lit(0)]))?;
 
         // Create a temp graph that has vertices with degrees that will be used in Pregel Execution
         let graph_with_degrees = GraphFrame{
@@ -70,8 +58,9 @@ impl<'a> PageRank<'a> {
         // --- Step 2: Create Pregel builder ---
         let pregel_builder = PregelBuilder::new(graph_with_degrees)
             .max_iterations(self.max_iter)
+            .checkpoint_interval(2) //TODO: Revisit once the number is finalized/generalized.
             .add_vertex_column("pagerank",
-                lit(1.0 / num_vertices), // All vertices start with a rank of 1/N
+                lit(reset_prob_per_vertices), // All vertices start with a rank of 1/N
                 lit(reset_prob_per_vertices) + lit(alpha) * col(PREGEL_MSG) // PageRank calculation
             )
             .add_vertex_column(
@@ -87,10 +76,27 @@ impl<'a> PageRank<'a> {
 
         // --- Step 3: Run Pregel Engine ---
         let result = pregel_builder.run(self.include_debug_columns).await?;
-        let final_page_ranks = result.data;
+        let calculated_page_ranks = result.data;
         
-        // TODO: Do we want to return the full computed dataframe or just vertex_id and page_rank should be fine??
-        Ok(final_page_ranks.select(vec![col("id"), col("pagerank")])?)
-        // Ok(final_page_ranks)
+        // Calculating the pagerank aggregation
+        let aggregated_rank = calculated_page_ranks.clone().aggregate(
+            vec![],
+            vec![sum(col("pagerank")).alias("pagerank_sum")]
+        )?
+        .cache().await?;
+
+        // Cross join with calculated pageranks df
+        let final_page_ranks = calculated_page_ranks.join(
+                    aggregated_rank,
+                    JoinType::Inner,
+                    &[],
+                    &[],
+                    None
+                )?;
+        Ok(final_page_ranks.select(
+            vec![
+                col("id"), 
+                (col("pagerank") / col("pagerank_sum")).alias("pagerank")]
+            )?)
     }
 }
