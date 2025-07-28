@@ -90,6 +90,51 @@ mod tests {
         Ok(GraphFrame { vertices, edges })
     }
 
+    // Creates GraphFrame from ldbc datasets.
+    // dataset: name of ldbc dataset like tested-pr-directed, wiki-Talk, etc.
+    pub async fn create_ldbc_test_graph(dataset: &str) -> Result<GraphFrame> {
+        let ctx = SessionContext::new();
+
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+
+        let edge_schema = Schema::new(vec![
+            Field::new("src", DataType::Int64, false),
+            Field::new("dst", DataType::Int64, false),
+        ]);
+        let vertices_schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
+
+        let edges_path = format!(
+            "{}/testing/data/ldbc/{}/{}.e.csv",
+            manifest_dir, dataset, dataset
+        );
+        let vertices_path = format!(
+            "{}/testing/data/ldbc/{}/{}.v.csv",
+            manifest_dir, dataset, dataset
+        );
+
+        let edges = ctx
+            .read_csv(
+                &edges_path,
+                CsvReadOptions::new()
+                    .delimiter(b' ')
+                    .has_header(false)
+                    .schema(&edge_schema),
+            )
+            .await?;
+
+        let vertices = ctx
+            .read_csv(
+                &vertices_path,
+                CsvReadOptions::new()
+                    .delimiter(b' ')
+                    .has_header(false)
+                    .schema(&vertices_schema),
+            )
+            .await?;
+
+        Ok(GraphFrame { vertices, edges })
+    }
+
     #[tokio::test]
     async fn test_num_nodes() -> Result<()> {
         let graph = create_test_graph()?;

@@ -108,51 +108,7 @@ impl GraphFrame {
 mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-
-    // Creates GraphFrame from ldbc datasets.
-    // dataset: name of ldbc dataset like tested-pr-directed, wiki-Talk, etc.
-    async fn create_ldbc_test_graph(dataset: &str) -> Result<GraphFrame> {
-        let ctx = SessionContext::new();
-
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-
-        let edge_schema = Schema::new(vec![
-            Field::new("src", DataType::Int64, false),
-            Field::new("dst", DataType::Int64, false),
-        ]);
-        let vertices_schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
-
-        let edges_path = format!(
-            "{}/testing/data/ldbc/{}/{}.e.csv",
-            manifest_dir, dataset, dataset
-        );
-        let vertices_path = format!(
-            "{}/testing/data/ldbc/{}/{}.v.csv",
-            manifest_dir, dataset, dataset
-        );
-
-        let edges = ctx
-            .read_csv(
-                &edges_path,
-                CsvReadOptions::new()
-                    .delimiter(b' ')
-                    .has_header(false)
-                    .schema(&edge_schema),
-            )
-            .await?;
-
-        let vertices = ctx
-            .read_csv(
-                &vertices_path,
-                CsvReadOptions::new()
-                    .delimiter(b' ')
-                    .has_header(false)
-                    .schema(&vertices_schema),
-            )
-            .await?;
-
-        Ok(GraphFrame { vertices, edges })
-    }
+    use crate::tests::create_ldbc_test_graph;
 
     // Gets the expected pagerank results from the mentioned ldbc dataset
     async fn get_ldbc_pr_results(dataset: &str) -> Result<DataFrame> {
@@ -200,7 +156,7 @@ mod tests {
                 &["vertex_id"],
                 None,
             )?
-            .with_column("difference", col("pagerank") - col("expected_pr"))?
+            .with_column("difference", abs(col("pagerank") - col("expected_pr")))?
             .filter(col("difference").gt(lit(0.0015)))?;
 
         // comparison_df.clone().show().await?;
