@@ -5,7 +5,8 @@ processing capabilities on top of DataFusion's DataFrame API.
 
 ## About
 
-This project aims to bring the power of GraphFrames to the Apache DataFusion ecosystem by leveraging DataFrame capabilities.
+This project aims to bring the power of GraphFrames to the Apache DataFusion ecosystem by leveraging DataFrame
+capabilities.
 It provides a similar API to Apache Spark's GraphFrames.
 
 ## Project Status
@@ -20,8 +21,8 @@ and Pregel API.
 | Graph Abstraction               | ✓           | ✓              |
 | Basic Statistics (degree, etc.) | ✓           | ✓              |
 | Pregel API                      | ✓           | ✓              |
-| Shortest Paths                  | ✓           | In Progress    |
-| PageRank                        | ✓           | Planned        |
+| Shortest Paths                  | ✓           | ✓              |
+| PageRank                        | ✓           | ✓              |
 | Parallel Personalized PageRank  | ✓           | Planned        |
 | Connected Components            | ✓           | Planned        |
 | Strongly Connected Components   | ✓           | Planned        |
