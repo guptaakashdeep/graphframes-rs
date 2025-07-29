@@ -1,5 +1,6 @@
 mod pagerank;
 mod pregel;
+mod shortest_paths;
 
 use datafusion::error::Result;
 use datafusion::functions_aggregate::count::count;

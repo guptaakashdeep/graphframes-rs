@@ -314,7 +314,10 @@ impl PregelBuilder {
             // are not participating in iteration.
             if self.participation_column.is_some() {
                 let participation_column = self.participation_column.as_ref().unwrap();
-                triplets = triplets.filter(pregel_src(&participation_column.name))?
+                triplets = triplets.filter(
+                    pregel_src(&participation_column.name)
+                        .or(pregel_dst(&participation_column.name)),
+                )?;
             }
 
             // Unfortunately, "unnest" does not allow passing to it an array of expression;
