@@ -1,4 +1,4 @@
-use crate::pregel::{PREGEL_MSG, pregel_dst};
+use crate::pregel::{MessageDirection, PREGEL_MSG, pregel_dst, pregel_src};
 use crate::{GraphFrame, VERTEX_ID};
 use arrow::compute::min;
 use datafusion::arrow;
@@ -114,6 +114,8 @@ pub struct ShortestPathsBuilder<'a> {
     max_iterations: usize,
     /// Interval at which to checkpoint the computation state
     checkpoint_interval: usize,
+    /// Apply a reversal shortest paths algorithm to get distances from landmarks to node
+    reversed: bool,
 }
 
 impl<'a> ShortestPathsBuilder<'a> {
@@ -130,7 +132,18 @@ impl<'a> ShortestPathsBuilder<'a> {
             landmarks: sorted_landmarks,
             max_iterations: i32::MAX as usize,
             checkpoint_interval: 1,
+            reversed: false,
         }
+    }
+
+    /// Sets the direction for shortest paths' computation.
+    ///
+    /// # Arguments
+    /// * `reversed` - If true, computes shortest paths from landmarks to vertices.
+    ///               If false, computes the shortest paths from vertices to landmarks.
+    pub fn reversed(mut self, reversed: bool) -> Self {
+        self.reversed = reversed;
+        self
     }
 
     /// Sets the maximum number of iterations for the algorithm.
@@ -242,7 +255,11 @@ impl<'a> ShortestPathsBuilder<'a> {
                 .iter()
                 .flat_map(|lm| {
                     let col_name = lm.to_string();
-                    let d_col = pregel_dst(DISTANCES).field(col_name.clone());
+                    let d_col = if self.reversed {
+                        pregel_src(DISTANCES).field(col_name.clone())
+                    } else {
+                        pregel_dst(DISTANCES).field(col_name.clone())
+                    };
                     vec![
                         lit(col_name),
                         when(d_col.clone().lt(lit(i32::MAX)), d_col + lit(1i32))
@@ -266,7 +283,14 @@ impl<'a> ShortestPathsBuilder<'a> {
                 update_participating.clone(),
             )
             // Add a message
-            .add_message(message_expr, crate::pregel::MessageDirection::DstToSrc)
+            .add_message(
+                message_expr,
+                if self.reversed {
+                    MessageDirection::SrcToDst
+                } else {
+                    MessageDirection::DstToSrc
+                },
+            )
             // Set aggregate expression
             .with_aggregate_expr(aggregate_expr_udaf.call(vec![col(PREGEL_MSG)]))
             // Set voting condition
@@ -300,6 +324,7 @@ impl GraphFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::create_ldbc_test_graph;
     use datafusion::arrow::array::{Int64Array, RecordBatch};
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
     use datafusion::prelude::SessionContext;
@@ -446,6 +471,66 @@ mod tests {
             0,
             "Found differences in shortest paths"
         );
+        Ok(())
+    }
+
+    async fn get_ldbc_bfs_results(dataset: &str) -> Result<DataFrame> {
+        let ctx = SessionContext::new();
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let expected_pr_schema = Schema::new(vec![
+            Field::new("vertex_id", DataType::Int64, false),
+            Field::new("expected_distance", DataType::Int64, false),
+        ]);
+        let expected_sp_path = format!(
+            "{}/testing/data/ldbc/{}/{}-BFS.csv",
+            manifest_dir, dataset, dataset
+        );
+        let expected_sp = ctx
+            .read_csv(
+                &expected_sp_path,
+                CsvReadOptions::new()
+                    .delimiter(b' ')
+                    .has_header(false)
+                    .schema(&expected_pr_schema),
+            )
+            .await?;
+        Ok(expected_sp)
+    }
+
+    #[tokio::test]
+    async fn test_ldbc() -> Result<()> {
+        let expected_distances = get_ldbc_bfs_results("test-bfs-directed").await?;
+        let graph = create_ldbc_test_graph("test-bfs-directed").await?;
+
+        let results = graph
+            .shortest_paths(vec![1])
+            .reversed(true) // In LDBC the task is formulated as find distance from the root
+            .checkpoint_interval(1)
+            .run()
+            .await?;
+        let diff = results
+            .join(
+                expected_distances,
+                JoinType::Left,
+                &[VERTEX_ID],
+                &["vertex_id"],
+                None,
+            )?
+            .select(vec![
+                col(VERTEX_ID),
+                col(DISTANCES).field("1").alias("got_distance"),
+                when(
+                    col("expected_distance").eq(lit(9223372036854775807i64)),
+                    lit(i32::MAX as i64),
+                )
+                .otherwise(col("expected_distance"))
+                .unwrap()
+                .alias("expected_distance"),
+            ])?
+            .filter(col("got_distance").not_eq(col("expected_distance")))?;
+
+        assert_eq!(diff.count().await?, 0);
+
         Ok(())
     }
 }
