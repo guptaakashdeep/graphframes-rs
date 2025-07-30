@@ -2,12 +2,9 @@ use crate::GraphFrame;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::error::Result;
 use datafusion::prelude::{CsvReadOptions, SessionContext};
-use java_properties::read;
 use std::collections::HashMap;
-use std::env;
-use std::fs::File;
-use std::io::BufReader;
-use std::io::{self, Result as ioResult};
+use std::{env,fs};
+use std::io::Result as ioResult;
 
 // Gets the basepath of the dataset based on if it's benchmark runs or test runs
 /// # Arguments
@@ -85,6 +82,7 @@ pub async fn create_ldbc_test_graph(
     Ok(GraphFrame { vertices, edges })
 }
 
+
 // Reads the ldbc dataset properties file and converts it into a HashMap
 pub fn parse_ldbc_properties_file(
     dataset: &str,
@@ -96,12 +94,18 @@ pub fn parse_ldbc_properties_file(
         dataset,
         dataset
     );
-    let prop_file = File::open(prop_fp)?;
-    let reader = BufReader::new(prop_file);
+    let content = fs::read_to_string(prop_fp)?;
+    let mut properties_map: HashMap<String, String> = HashMap::new();
 
-    // need to map the Properties error thrown by java_properties to io Error
-    let properties_map =
-        read(reader).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    for line in content.lines() {
+        let trimmed_line = line.trim();
 
+        if trimmed_line.is_empty() || trimmed_line.starts_with("#") {
+            continue;
+        }
+        if let Some((key, value)) = trimmed_line.split_once("=") {
+            properties_map.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
     Ok(properties_map)
 }
