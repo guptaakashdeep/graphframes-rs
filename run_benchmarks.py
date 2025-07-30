@@ -5,6 +5,7 @@ import requests
 import subprocess
 import sys
 import shutil
+import time
 
 # The base URL for downloading Graphalytics datasets.
 BASE_URL = "https://datasets.ldbcouncil.org/graphalytics"
@@ -33,19 +34,28 @@ def prepare_dataset(dataset_name: str):
     if not archive_path.exists():
         print(f"Dataset archive '{archive_path}' not found. Downloading...")
         archive_url = f"{BASE_URL}/{dataset_name}.tar.zst"
-        try:
-            response = requests.get(archive_url, stream=True)
-            response.raise_for_status()
-            with open(archive_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            print(f"Successfully downloaded {archive_path}")
-        except requests.exceptions.RequestException as e:
-            print(
-                f"Error: Failed to download dataset from {archive_url}", file=sys.stderr
-            )
-            print(e, file=sys.stderr)
-            sys.exit(1)
+        # 3 tries to download the dataset before actually failing
+        retries = 3
+        for attempt in range(retries):
+            try:
+                response = requests.get(archive_url, stream=True)
+                response.raise_for_status()
+                with open(archive_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                print(f"Successfully downloaded {archive_path}")
+                break  # Success, exit the loop
+            except requests.exceptions.RequestException as e:
+                print(f"Attempt {attempt + 1} of {retries} failed: {e}", file=sys.stderr)
+                if attempt < retries - 1:
+                    print("Retrying in 5 seconds...", file=sys.stderr)
+                    time.sleep(5)
+                else:
+                    print(
+                        f"Error: Failed to download dataset from {archive_url} after {retries} attempts.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
 
     # Now, decompress and extract the archive using command-line tools.
     print("Decompressing dataset...")
