@@ -3,8 +3,8 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::error::Result;
 use datafusion::prelude::{CsvReadOptions, SessionContext};
 use std::collections::HashMap;
-use std::{env,fs};
 use std::io::Result as ioResult;
+use std::{env, fs};
 
 // Gets the basepath of the dataset based on if it's benchmark runs or test runs
 /// # Arguments
@@ -81,7 +81,6 @@ pub async fn create_ldbc_test_graph(
         .await?;
     Ok(GraphFrame { vertices, edges })
 }
-
 
 // Reads the ldbc dataset properties file and converts it into a HashMap
 pub fn parse_ldbc_properties_file(
