@@ -22,14 +22,14 @@ fn _get_dataset_base_path(benchmark_run: bool) -> Result<String> {
 
 /// Creates Schema for Graphframe edges Dataframe based on is_3d flag
 /// # Arguments
-/// * `is_3d`: Boolean value that defines if edges has weights field or not.
-fn _create_edge_schema(is_3d: bool) -> Schema {
+/// * `is_weighted`: Boolean value that defines if edges has weights field or not.
+fn _create_edge_schema(is_weighted: bool) -> Schema {
     let mut edge_fields = vec![
         Field::new("src", DataType::Int64, false),
         Field::new("dst", DataType::Int64, false),
     ];
 
-    if is_3d {
+    if is_weighted {
         edge_fields.push(Field::new("weights", DataType::Float64, false))
     }
 
@@ -48,11 +48,11 @@ fn _create_edge_schema(is_3d: bool) -> Schema {
 pub async fn create_ldbc_test_graph(
     dataset: &str,
     benchmark_run: bool,
-    is_3d: bool,
+    is_weighted: bool,
 ) -> Result<GraphFrame> {
     let ctx = SessionContext::new();
 
-    let edge_schema = _create_edge_schema(is_3d);
+    let edge_schema = _create_edge_schema(is_weighted);
     let vertices_schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
 
     let ds_base_path = _get_dataset_base_path(benchmark_run)?;
