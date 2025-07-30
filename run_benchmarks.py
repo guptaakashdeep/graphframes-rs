@@ -101,7 +101,7 @@ def prepare_dataset(dataset_name: str):
                 ):
                     old_path = pathlib.Path(dirpath) / filename
                     new_path = old_path.with_name(f"{old_path.name}.csv")
-                    print(f"  Renaming {old_path} to {new_path}")
+                    print(f"\tRenaming {old_path} to {new_path}")
                     os.rename(old_path, new_path)
         print("File renaming complete.")
 
