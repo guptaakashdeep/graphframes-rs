@@ -24,11 +24,16 @@ CLI utility:
 
 ### Parameters for `run_benchmarks.py`
 
-- `--dataset`: LDBC dataset name on which user want to run the benchmark (for e.g. test-pr-directed, cit-Patents). Dataset name are exactly same as mentioned in LDBC website.
+- `--dataset`: [MANDATORY] LDBC dataset name on which user want to run the benchmark (for e.g. test-pr-directed, cit-Patents). Dataset name are exactly same as mentioned in LDBC website.
 - `--checkpoint_interval`: If user wants to define a specific number of checkpoints for Algorithms to run on. `default: 1`
+- `--name`: If a particular benchmark needs to run. Name should be same as the `[[bench]]` names present in `Cargo.toml`
 
 ```bash
+# Running all the benchmarks
 python3 run_benchmarks.py --dataset cit-Patents --checkpoint_interval 2
+
+# Running an individual benchmark
+python3 run_benchmarks.py --dataset cit-Patents --checkpoint_interval 2 --name pagerank_benchmark
 ```
 
 ## Benchmarking Reports

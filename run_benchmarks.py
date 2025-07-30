@@ -108,7 +108,7 @@ def prepare_dataset(dataset_name: str):
         sys.exit(1)
 
 
-def run_benchmarks(dataset_name: str, checkpoint_interval: int):
+def run_benchmarks(dataset_name: str, checkpoint_interval: int, benchmark_name: str):
     """
     Runs the Rust benchmarks using 'cargo bench', passing the dataset name
     as an environment variable.
@@ -122,8 +122,13 @@ def run_benchmarks(dataset_name: str, checkpoint_interval: int):
 
     # Execute 'cargo bench' and stream its output.
     try:
+        cmd = (
+            ["cargo", "bench"]
+            if not benchmark_name
+            else ["cargo", "bench", "--bench", benchmark_name]
+        )
         process = subprocess.Popen(
-            ["cargo", "bench"],
+            cmd,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -172,18 +177,26 @@ def main():
     parser.add_argument(
         "--checkpoint_interval",
         type=str,
+        default="1",
         required=False,
         help="Providing checkpoint_interval to be used in algorithms to run benchmark.",
     )
+    parser.add_argument(
+        "--name",
+        type=str,
+        required=False,
+        help="Name of the benchmark that needs to run.",
+    )
     args = parser.parse_args()
     dataset = args.dataset
-    checkpoint_interval = args.checkpoint_interval if args.checkpoint_interval else 1
+    checkpoint_interval = args.checkpoint_interval
+    benchmark_name = args.name
 
     # Ensure the base data directory exists.
     BENCH_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     prepare_dataset(dataset)
-    run_benchmarks(dataset, checkpoint_interval)
+    run_benchmarks(dataset, checkpoint_interval, benchmark_name)
 
 
 if __name__ == "__main__":
