@@ -139,7 +139,7 @@ mod tests {
     #[tokio::test]
     async fn test_pagerank_run() -> Result<()> {
         let test_dataset: &str = "test-pr-directed";
-        let graph = create_ldbc_test_graph(test_dataset, false).await?;
+        let graph = create_ldbc_test_graph(test_dataset, false, false).await?;
         let calculated_page_rank = graph
             .pagerank()
             .max_iter(14)

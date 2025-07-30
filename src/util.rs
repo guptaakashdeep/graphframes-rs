@@ -2,19 +2,38 @@ use crate::GraphFrame;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::error::Result;
 use datafusion::prelude::{CsvReadOptions, SessionContext};
+use java_properties::read;
 use std::collections::HashMap;
-use std::io::Result as ioResult;
-use std::{env, fs};
+use std::env;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::{self, Result as ioResult};
 
 // Gets the basepath of the dataset based on if it's benchmark runs or test runs
 /// # Arguments
 ///
 /// * `benchmark_run`: true for benchmark runs to read data from bench/data dir, false for tests to read data from testing/data.
-pub fn _get_dataset_base_path(benchmark_run: bool) -> Result<String> {
+fn _get_dataset_base_path(benchmark_run: bool) -> Result<String> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let dir_name = if benchmark_run { "benches" } else { "testing" };
     let base_path = format!("{}/{}/data/ldbc", manifest_dir, dir_name);
     Ok(base_path)
+}
+
+/// Creates Schema for Graphframe edges Dataframe based on is_3d flag
+/// # Arguments
+/// * `is_3d`: Boolean value that defines if edges has weights field or not.
+fn _create_edge_schema(is_3d: bool) -> Schema {
+    let mut edge_fields = vec![
+        Field::new("src", DataType::Int64, false),
+        Field::new("dst", DataType::Int64, false),
+    ];
+
+    if is_3d {
+        edge_fields.push(Field::new("weights", DataType::Float64, false))
+    }
+
+    Schema::new(edge_fields)
 }
 
 /// Creates a GraphFrame from an LDBC-style dataset.
@@ -25,13 +44,15 @@ pub fn _get_dataset_base_path(benchmark_run: bool) -> Result<String> {
 ///
 /// * `dataset`: The name of the dataset directory (e.g., "test-pr-directed").
 /// * `benchmark_run`: true for benchmark runs to read data from bench/data dir, false for tests to read data from testing/data.
-pub async fn create_ldbc_test_graph(dataset: &str, benchmark_run: bool) -> Result<GraphFrame> {
+/// * `is_3d`: Boolean value that defines if edges has weights field or not.
+pub async fn create_ldbc_test_graph(
+    dataset: &str,
+    benchmark_run: bool,
+    is_3d: bool,
+) -> Result<GraphFrame> {
     let ctx = SessionContext::new();
 
-    let edge_schema = Schema::new(vec![
-        Field::new("src", DataType::Int64, false),
-        Field::new("dst", DataType::Int64, false),
-    ]);
+    let edge_schema = _create_edge_schema(is_3d);
     let vertices_schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
 
     let ds_base_path = _get_dataset_base_path(benchmark_run)?;
@@ -75,18 +96,12 @@ pub fn parse_ldbc_properties_file(
         dataset,
         dataset
     );
-    let content = fs::read_to_string(prop_fp)?;
-    let mut properties_map: HashMap<String, String> = HashMap::new();
+    let prop_file = File::open(prop_fp)?;
+    let reader = BufReader::new(prop_file);
 
-    for line in content.lines() {
-        let trimmed_line = line.trim();
+    // need to map the Properties error thrown by java_properties to io Error
+    let properties_map =
+        read(reader).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
-        if trimmed_line.is_empty() || trimmed_line.starts_with("#") {
-            continue;
-        }
-        if let Some((key, value)) = trimmed_line.split_once("=") {
-            properties_map.insert(key.trim().to_string(), value.trim().to_string());
-        }
-    }
     Ok(properties_map)
 }

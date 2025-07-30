@@ -19,7 +19,7 @@ fn benchmark_pagerank(c: &mut Criterion) {
 
     // Load the graph data once before running the benchmark.
     let graph = rt
-        .block_on(create_ldbc_test_graph(&dataset_name, true))
+        .block_on(create_ldbc_test_graph(&dataset_name, true, false))
         .expect("Failed to create test graph");
 
     // Creating pagerank_builder here so to exclude the time of generation in each iteration
@@ -38,7 +38,13 @@ fn benchmark_pagerank(c: &mut Criterion) {
         |b| {
             // Use the `to_async` adapter to benchmark an async function.
             b.to_async(&rt).iter(|| async {
-                pagerank_builder.clone().run().await.unwrap();
+                let _ = pagerank_builder
+                    .clone()
+                    .run()
+                    .await
+                    .unwrap()
+                    .collect()
+                    .await;
             })
         },
     );

@@ -11,6 +11,7 @@ exclude = [
 [dependencies]
 datafusion = "48.0.1"
 tokio = {version = "1"}
+java-properties = "2.0.0"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }

@@ -500,7 +500,7 @@ mod tests {
     #[tokio::test]
     async fn test_ldbc() -> Result<()> {
         let expected_distances = get_ldbc_bfs_results("test-bfs-directed").await?;
-        let graph = create_ldbc_test_graph("test-bfs-directed", false).await?;
+        let graph = create_ldbc_test_graph("test-bfs-directed", false, false).await?;
 
         let results = graph
             .shortest_paths(vec![1])
